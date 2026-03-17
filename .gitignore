@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+venv/
+.venv/
+env/
+.env/
+
+# Environment variables — NEVER commit API keys
+.env
+.env.local
+*.env
+
+# Generated artifacts — run ingest.py to regenerate
+vector_store.json
+
+# Sentence Transformers model cache
+.cache/
+
+# Editor
+.cursor/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
