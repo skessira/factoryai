@@ -70,6 +70,84 @@ This file documents key design decisions, the reasoning behind them, and where A
 
 ---
 
+## Decision 8: LLM choice — gpt-4o-mini
+
+**What:** Used OpenAI's `gpt-4o-mini` as the generation model.
+
+**Why:** Fast, cheap, and more than capable for retrieval-augmented tasks. In RAG, the LLM's job is relatively constrained — it synthesises provided context into prose, it doesn't need to reason from scratch. gpt-4o-mini handles this well at a fraction of the cost of GPT-4o. For dev usage, the cost is negligible (hundreds of requests per dollar).
+
+**Alternatives rejected:** Ollama (local Llama 3 / Mistral) — no API cost and privacy-preserving, but slower on CPU and more complex setup for this stage. Valid for production in privacy-sensitive factory environments. OpenAI GPT-4o — higher quality but ~10x the cost with no meaningful improvement for grounded Q&A tasks.
+
+**AI vs. judgment:** Architectural judgment on model tier. Cost/capability analysis was done collaboratively.
+
+---
+
+## Decision 9: `temperature=0` for LLM calls
+
+**What:** Set `temperature=0` in the OpenAI API call.
+
+**Why:** Temperature controls output randomness. At 0, the model is deterministic — same input always produces the same output. For factual Q&A on equipment documentation, consistency and accuracy matter more than variety. A maintenance engineer asking the same question twice should get the same answer.
+
+**Trade-off:** Determinism means less "creative" phrasing, but that's a feature not a bug here. Higher temperature would be appropriate for tasks like generating maintenance report summaries or operator communications.
+
+**AI vs. judgment:** Claude suggested this as standard practice for factual RAG. Accepted — consistent with production patterns.
+
+---
+
+## Decision 10: Module-level singletons for expensive resources
+
+**What:** The embedding model, vector store, and OpenAI client are each loaded once at module level using a lazy-init pattern (`_get_X()` functions with global cache).
+
+**Why:** Loading the embedding model (all-MiniLM-L6-v2) takes 1-2 seconds. Reading the vector store from disk is an I/O operation. Doing either on every API request would make response times unacceptable. Loading once at startup and reusing across requests is the correct pattern for stateless resources.
+
+**AI vs. judgment:** Claude generated the pattern. The reasoning (why lazy init matters for API performance) was covered in the code walkthrough — understood and validated.
+
+---
+
+## Decision 11: Citations sourced from retrieval metadata, not LLM output
+
+**What:** Citations in the API response are built directly from the metadata of the top-K retrieved chunks, not parsed or generated from the LLM's text output.
+
+**Why:** LLMs hallucinate citation details — source names, page numbers, section titles. If you ask the model to produce its own citations, it will invent plausible-sounding but wrong references. Since we already have accurate metadata attached to every retrieved chunk (source filename, page number), we use that directly. The LLM's job is only to generate the answer prose.
+
+**Impact:** Citations are always accurate and deterministic. This is a critical correctness property for a manufacturing context where a wrong manual reference could mean wrong maintenance procedure.
+
+**AI vs. judgment:** Sammy identified this principle during the Socratic walkthrough before any code was written. Core RAG design judgment.
+
+---
+
+## Decision 12: Top-K = 3 chunks
+
+**What:** The retrieval step returns the 3 most similar chunks to pass to the LLM.
+
+**Why:** Enough context for most single-topic questions without flooding the LLM context window with noise. More chunks increase token cost and can dilute the signal — the LLM may weight a weaker chunk and produce a less focused answer. 3 is a reasonable starting point; tunable as the knowledge base grows.
+
+**Known limitation:** All 3 chunks can come from the same page if relevant content is concentrated there, producing duplicate citations. Future improvement: deduplicate citations by (source, page_number) before returning the response.
+
+**AI vs. judgment:** Value chosen collaboratively. The deduplication gap was identified by Sammy reviewing the first live response.
+
+---
+
+## Decision 13: Separate `query.py` module
+
+**What:** All query pipeline logic lives in `query.py`. `main.py` only handles routing, Pydantic validation, and error mapping.
+
+**Why:** Separation of concerns. `main.py` is the HTTP boundary layer — it should know nothing about embeddings or LLMs. `query.py` is the intelligence layer — it should know nothing about HTTP. This makes each independently testable and means the pipeline logic can be reused outside a web context (e.g., a CLI tool or a batch processing script).
+
+**AI vs. judgment:** Claude proposed the separation. Accepted as clean architecture practice consistent with production patterns.
+
+---
+
+## Decision 14: Version control from day one, not after "v1 complete"
+
+**What:** Git + GitHub initialized at the start of the query pipeline session, not deferred until a "finished" version existed.
+
+**Why:** Commit history is the portfolio artifact, not just the final code. A repo showing incremental commits (skeleton → ingestion → query pipeline) demonstrates architectural thinking and iterative development. A single "initial commit" of finished code looks like it was dumped in, regardless of quality. The two historical commits (v1 skeleton, ingestion pipeline) reconstruct the project's real development arc.
+
+**AI vs. judgment:** Sammy raised the question. The reasoning about portfolio signal vs. code quality was the deciding factor.
+
+---
+
 ## Decision 5: `/health` endpoint
 
 **What:** A `GET /health` endpoint returning `{"status": "ok", "version": "1.0.0"}`.
